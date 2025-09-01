@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>YesDocu - Suivi de production</title>
+<style>
+  :root{
+    --blue:#0b6fbf; --blue-dark:#095b9a; --blue-light:#e7f1fb;
+    --bg:#f2f6fb; --line:#dbe7f5; --row-alt:#f7fbff; --text:#1f2937;
+    --ok:#1a7f37; --warn:#8a6a00; --err:#b91c1c;
+  }
+  *{box-sizing:border-box}
+  body{ font-family:Segoe UI, Roboto, Arial, sans-serif; background:var(--bg); color:var(--text); margin:0; padding:20px; }
+  h1{ margin:0 0 16px 0; color:var(--blue); font-weight:800; letter-spacing:.2px }
+
+  .nav{ display:flex; gap:8px; margin-bottom:12px; align-items:center }
+  .tab{ padding:8px 14px; border-radius:6px; background:var(--blue-light); color:#074c80; font-weight:600; cursor:pointer; border:1px solid #cfe3fb }
+  .tab.active{ background:var(--blue); color:#fff; border-color:var(--blue) }
+
+  #loginBox{ display:flex; gap:6px; align-items:center; margin-left:auto }
+  #loginBox input{ padding:6px 8px; border:1px solid #cdd9ea; border-radius:6px; background:#fff }
+  #loginBox button{ padding:6px 10px; border-radius:6px; border:1px solid #9ec4ea; background:#fff; cursor:pointer }
+  #loginBox button:hover{ background:#eaf4ff }
+
+  .panel{ background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; box-shadow:0 6px 20px rgba(0,0,0,.06) }
+  .head{ background:var(--blue); color:#fff; padding:12px 16px; font-weight:700 }
+
+  /* Filtres centrés */
+  .filters{ background:#cfe5fb; border-bottom:1px solid var(--line); padding:14px 16px; display:flex; justify-content:center; }
+  .filters-centered{ display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; max-width:1100px; width:100%; justify-content:center; }
+  .group{ display:flex; flex-direction:column; gap:4px }
+  .group-wide{ min-width:320px; flex:1 1 360px; }
+  /* élargi pour tenir toute la ligne des filtres avancés */
+  .group-wide.centered{ flex:0 1 1100px; margin:0 auto; }
+  .filters label{ font-size:12px; font-weight:700; color:#063b64 }
+  .filters input, .filters select{ height:36px; padding:0 10px; border:1px solid #9ec4ea; border-radius:8px; background:#fff; outline:none; line-height:34px; min-width:0; }
+  .filters input:focus, .filters select:focus{ border-color:var(--blue); box-shadow:0 0 0 3px rgba(11,111,191,.15); }
+  .compact{ width:70px }
+  .break{ flex-basis:100%; height:0 }
+
+  /* Tag inputs (compacts) */
+  .name-row{ display:flex; align-items:flex-end; gap:8px; flex-wrap:nowrap; } /* reste sur une seule ligne */
+  .mini-group{ display:flex; flex-direction:column; gap:4px; }
+  /* largeur flexible 140 → 240 px pour Date/Heure & Nom */
+  .flex-compact{ flex:1 1 200px; min-width:140px; max-width:240px; }
+  .tagbox{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:6px; min-height:36px; background:#fff; border:1px solid #9ec4ea; border-radius:8px; flex:1 1 auto; width:100% }
+  .tagbox input{ border:none; outline:none; min-width:80px; height:24px; line-height:24px; padding:4px 6px }
+  .tag{ display:flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; background:var(--blue-light); color:#074c80; font-weight:700; font-size:12px }
+  .tag button{ border:none; background:transparent; cursor:pointer; padding:0; font-weight:700; color:#074c80 }
+
+  .size-filter, .pages-filter { display:flex; align-items:center; gap:6px; white-space:nowrap; }
+  .size-filter label, .pages-filter label{ font-size:12px; font-weight:700; color:#063b64; margin-right:2px; }
+  .num{ width:90px } .num::-webkit-outer-spin-button, .num::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0 }
+  .pag-toggle{ display:flex; align-items:center; gap:6px; white-space:nowrap; font-weight:700; color:#063b64 }
+
+  /* boutons */
+  .btn{ background:#fff; border:1px solid #9ec4ea; color:#063b64; border-radius:6px; padding:8px 12px; cursor:pointer; font-weight:700 }
+  .btn.primary{ background:var(--blue); border-color:var(--blue); color:#fff }
+  .btn.primary:hover{ background:var(--blue-dark) }
+  .btn.small{ padding:6px 10px; font-weight:600 }
+  .icon-btn{ display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; border:1px solid #9ec4ea; background:#fff; border-radius:6px; cursor:pointer; text-decoration:none }
+  .icon-btn:hover{ background:#eef6ff }
+
+  .toolbar{ display:flex; align-items:center; gap:8px; padding:10px 16px; flex-wrap:wrap }
+  .toolbar.center{ justify-content:center }
+  .toolbar.between{ justify-content:space-between }
+  .left-strong{ font-weight:700; color:#063b64 }
+
+  /* tableau */
+  .table-wrap{ padding:0 16px 16px 16px }
+  table{ width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--line) }
+  thead th{ background:var(--blue); color:#fff; padding:10px; text-align:left; font-size:12px; position:sticky; top:0; }
+  thead th:last-child{ text-align:right }
+  thead th.sortable{ cursor:pointer; user-select:none }
+  thead th.sortable::after{ content:""; margin-left:6px; border:4px solid transparent; display:inline-block; transform:translateY(-1px) }
+  thead th.sort-asc::after{ border-bottom-color:#fff }
+  thead th.sort-desc::after{ border-top-color:#fff }
+  tbody td{ padding:8px 10px; border-bottom:1px solid #eef4fc; font-size:13px; white-space:nowrap }
+  tbody tr:nth-child(even){ background:var(--row-alt) }
+  .w-nom{ max-width:440px; overflow:hidden; text-overflow:ellipsis }
+  .w-small{ text-align:center; width:70px }
+  .w-kb{ text-align:right; width:110px }
+
+  .section{ display:none }
+  .section.active{ display:block }
+
+  select.hotSel{ border:1px solid #9ec4ea; border-radius:6px; padding:6px 8px; height:36px; background:#fff }
+
+  /* Pagination moderne centrée (toutes pages) */
+  .pagination{ display:flex; gap:6px; align-items:center; justify-content:center; width:100% }
+  .pagination .page-btn{ min-width:36px; height:36px; padding:0 10px; border:1px solid #9ec4ea; background:#fff; border-radius:999px; cursor:pointer; font-weight:700 }
+  .pagination .page-btn.active{ background:var(--blue); color:#fff; border-color:var(--blue) }
+  .pagination .page-btn:disabled{ opacity:.7; cursor:not-allowed }
+</style>
+</head>
+<body>
+
+<h1>YesDocu</h1>
+
+<div class="nav">
+  <div class="tab active" id="tab-imp">Impressions</div>
+  <div class="tab" id="tab-reimp">Réimpressions</div>
+  <div class="tab" id="tab-suivi">Suivi</div>
+  <div class="tab" id="tab-admin">Administration</div>
+
+  <div id="loginBox">
+    <input id="loginUser" placeholder="Utilisateur" />
+    <input id="loginPass" placeholder="Mot de passe" type="password" />
+    <button id="btnLogin">Se connecter</button>
+    <button id="btnLogout" style="display:none;">Se déconnecter</button>
+    <span id="whoami" style="margin-left:8px; font-weight:600;"></span>
+  </div>
+</div>
+
+<!-- IMPRESSIONS -->
+<div class="panel section active" id="sec-imp">
+  <!-- Filtres -->
+  <div class="filters" id="filters-imp">
+    <div class="filters-centered">
+      <div class="group">
+        <label>Document</label>
+        <select id="impDocType">
+          <option value="Liste" selected>Liste</option>
+          <option value="CEB">CEB</option>
+        </select>
+      </div>
+
+      <div class="group" id="group-impPrefix">
+        <label>Type (Préfixe)</label>
+        <select id="impPrefix">
+          <option value="">Tous</option>
+          <option>LPVL</option><option>LPRC</option><option>LPRL</option>
+          <option>LPEC</option><option>LPEL</option><option>LDRC</option>
+          <option>LDRL</option><option>LDEC</option><option>LDEB</option>
+        </select>
+      </div>
+
+      <div class="group"><label>DPT</label><input id="impDpt" type="text" class="compact" maxlength="3"></div>
+      <div class="group"><label>SPR</label><input id="impSpr" type="text" class="compact" maxlength="3"></div>
+      <div class="group"><label>COM</label><input id="impCom" type="text" class="compact" maxlength="3"></div>
+      <div class="group"><label>LVO</label><input id="impLvo" type="text" class="compact" maxlength="3"></div>
+      <div class="group"><label>BUR</label><input id="impBur" type="text" class="compact" maxlength="3"></div>
+      <div class="group"><label>RUN</label><input id="impRun" type="text" class="compact" maxlength="3"></div>
+
+      <div class="break"></div>
+
+      <!-- Ligne avancée : tout sur UNE ligne -->
+      <div class="group group-wide centered">
+        <div class="name-row">
+          <!-- Date/Heure (tags, sans suggestions) -->
+          <div class="mini-group flex-compact">
+            <label>Date / Heure (tags)</label>
+            <div class="tagbox" id="impDateTagsBox">
+              <div id="impDateTags" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+              <input id="impDateInput" type="text" placeholder="2025-08-31, 31/08/2025, 14:30" autocomplete="off" />
+            </div>
+          </div>
+
+          <!-- Nom (tags, sans suggestions) -->
+          <div class="mini-group flex-compact">
+            <label>Nom du fichier (mots-clés)</label>
+            <div class="tagbox" id="impNameTagsBox">
+              <div id="impTags" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+              <input id="impNameInput" type="text" placeholder="LDEB, 105, 01_1_00" autocomplete="off" />
+            </div>
+          </div>
+
+          <!-- Taille -->
+          <div class="size-filter" title="Filtrer par taille (Ko)">
+            <label for="impSizeOp">Taille (Ko)</label>
+            <select id="impSizeOp">
+              <option value="">(aucun)</option><option value="ge">≥</option><option value="le">≤</option><option value="between">entre</option>
+            </select>
+            <input type="number" id="impSizeMin" class="num" placeholder="min" />
+            <span id="impSizeDash" style="display:none;">–</span>
+            <input type="number" id="impSizeMax" class="num" placeholder="max" style="display:none;" />
+          </div>
+
+          <!-- Pages -->
+          <div class="pages-filter" title="Filtrer par nb pages">
+            <label for="impPagesOp">Pages</label>
+            <select id="impPagesOp">
+              <option value="">(aucun)</option><option value="ge">≥</option><option value="le">≤</option><option value="between">entre</option>
+            </select>
+            <input type="number" id="impPagesMin" class="num" placeholder="min" />
+            <span id="impPagesDash" style="display:none;">–</span>
+            <input type="number" id="impPagesMax" class="num" placeholder="max" style="display:none;" />
+          </div>
+
+          <label class="pag-toggle"><input type="checkbox" id="impPagToggle" checked /> Pagination</label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chercher / Reset -->
+  <div class="toolbar center" id="impActionsTop">
+    <button class="btn small" id="impSearch">Chercher</button>
+    <button class="btn small" id="impReset">Reset</button>
+  </div>
+
+  <!-- Documents + Imprimante(lot) + Soumettre -->
+  <div class="toolbar between" id="impSubmitBar">
+    <div class="left-strong" id="impRangeText">Documents 0 à 0 sur 0</div>
+    <div style="display:flex; align-items:center; gap:8px; margin:0 auto;">
+      <label>Imprimante (lot) :</label>
+      <select id="hfImpBatch" class="hotSel"></select>
+      <button class="btn primary" id="submitImp">Imprimer sélection</button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="sortable" data-sort="date">Date</th>
+          <th class="w-nom sortable" data-sort="name">Nom</th>
+          <th class="sortable" data-sort="prefix">Type</th>
+          <th class="w-small sortable" data-sort="dpt">Dpt</th>
+          <th class="w-small sortable" data-sort="spr">SPR</th>
+          <th class="w-small sortable" data-sort="com">COM</th>
+          <th class="w-small sortable" data-sort="lvo">LVO</th>
+          <th class="w-small sortable" data-sort="bur">BUR</th>
+          <th class="w-small sortable" data-sort="run">RUN</th>
+          <th class="w-small sortable" data-sort="pages">Pages</th>
+          <th class="w-kb sortable" data-sort="sizekb">Taille (Ko)</th>
+          <th>Actions</th>
+          <th>Vue</th>
+          <th style="width:60px;">
+            <input type="checkbox" id="selectAllPageImp" title="Sélectionner tous les fichiers de la page" />
+          </th>
+        </tr>
+      </thead>
+      <tbody id="tb-imp"></tbody>
+    </table>
+  </div>
+
+  <div class="toolbar center">
+    <div class="pagination" id="pag-imp"></div>
+  </div>
+</div>
+
+<!-- RÉIMPRESSION (CLONE d'Impressions) -->
+<div class="panel section" id="sec-reimp">
+  <!-- Filtres -->
+  <div class="filters" id="filters-reimp">
+    <div class="filters-centered">
+      <div class="group">
+        <label>Document</label>
+        <select id="reimpDocType">
+          <option value="Liste" selected>Liste</option>
+          <option value="CEB">CEB</option>
+        </select>
+      </div>
+
+      <div class="group" id="group-reimpPrefix">
+        <label>Type (Préfixe)</label>
+        <select id="reimpPrefix">
+          <option value="">Tous</option>
+          <option>LPVL</option><option>LPRC</option><option>LPRL</option>
+          <option>LPEC</option><option>LPEL</option><option>LDRC</option>
+          <option>LDRL</option><option>LDEC</option><option>LDEB</option>
+        </select>
+      </div>
+
+      <div class="group"><label>DPT</label><input id="reimpDpt" type="text" class="compact" maxlength="3"></div>
+      <div class="group"><label>SPR</label><input id="reimpSpr" type="text" class="compact" maxlength="3"></div>
+      <div class="group"><label>COM</label><input id="reimpCom" type="text" class="compact" maxlength="3"></div>
+      <div class="group"><label>LVO</label><input id="reimpLvo" type="text" class="compact" maxlength="3"></div>
+      <div class="group"><label>BUR</label><input id="reimpBur" type="text" class="compact" maxlength="3"></div>
+      <div class="group"><label>RUN</label><input id="reimpRun" type="text" class="compact" maxlength="3"></div>
+
+      <div class="break"></div>
+
+      <!-- Ligne avancée : tout sur UNE ligne -->
+      <div class="group group-wide centered">
+        <div class="name-row">
+          <!-- Date/Heure (tags, sans suggestions) -->
+          <div class="mini-group flex-compact">
+            <label>Date / Heure (tags)</label>
+            <div class="tagbox" id="reimpDateTagsBox">
+              <div id="reimpDateTags" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+              <input id="reimpDateInput" type="text" placeholder="2025-08-31, 31/08/2025, 14:30" autocomplete="off" />
+            </div>
+          </div>
+
+          <!-- Nom (tags, sans suggestions) -->
+          <div class="mini-group flex-compact">
+            <label>Nom du fichier (mots-clés)</label>
+            <div class="tagbox" id="reimpNameTagsBox">
+              <div id="reimpTags" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+              <input id="reimpNameInput" type="text" placeholder="LDEB, 105, 01_1_00" autocomplete="off" />
+            </div>
+          </div>
+
+          <!-- Taille -->
+          <div class="size-filter" title="Filtrer par taille (Ko)">
+            <label for="reimpSizeOp">Taille (Ko)</label>
+            <select id="reimpSizeOp">
+              <option value="">(aucun)</option><option value="ge">≥</option><option value="le">≤</option><option value="between">entre</option>
+            </select>
+            <input type="number" id="reimpSizeMin" class="num" placeholder="min" />
+            <span id="reimpSizeDash" style="display:none;">–</span>
+            <input type="number" id="reimpSizeMax" class="num" placeholder="max" style="display:none;" />
+          </div>
+
+          <!-- Pages -->
+          <div class="pages-filter" title="Filtrer par nb pages">
+            <label for="reimpPagesOp">Pages</label>
+            <select id="reimpPagesOp">
+              <option value="">(aucun)</option><option value="ge">≥</option><option value="le">≤</option><option value="between">entre</option>
+            </select>
+            <input type="number" id="reimpPagesMin" class="num" placeholder="min" />
+            <span id="reimpPagesDash" style="display:none;">–</span>
+            <input type="number" id="reimpPagesMax" class="num" placeholder="max" style="display:none;" />
+          </div>
+
+          <label class="pag-toggle"><input type="checkbox" id="reimpPagToggle" checked /> Pagination</label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chercher / Reset -->
+  <div class="toolbar center" id="reimpActionsTop">
+    <button class="btn small" id="reimpSearch">Chercher</button>
+    <button class="btn small" id="reimpReset">Reset</button>
+  </div>
+
+  <!-- Documents + Imprimante(lot) + Imprimer -->
+  <div class="toolbar between" id="reimpSubmitBar">
+    <div class="left-strong" id="reimpRangeText">Documents 0 à 0 sur 0</div>
+    <div style="display:flex; align-items:center; gap:8px; margin:0 auto;">
+      <label>Imprimante (lot) :</label>
+      <select id="hfReimpBatch" class="hotSel"></select>
+      <button class="btn primary" id="submitReimp">Imprimer sélection</button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="sortable" data-sort="date">Date</th>
+          <th class="w-nom sortable" data-sort="name">Nom</th>
+          <th class="sortable" data-sort="prefix">Type</th>
+          <th class="w-small sortable" data-sort="dpt">Dpt</th>
+          <th class="w-small sortable" data-sort="spr">SPR</th>
+          <th class="w-small sortable" data-sort="com">COM</th>
+          <th class="w-small sortable" data-sort="lvo">LVO</th>
+          <th class="w-small sortable" data-sort="bur">BUR</th>
+          <th class="w-small sortable" data-sort="run">RUN</th>
+          <th class="w-small sortable" data-sort="pages">Pages</th>
+          <th class="w-kb sortable" data-sort="sizekb">Taille (Ko)</th>
+          <th>Actions</th>
+          <th>Vue</th>
+          <th style="width:60px;">
+            <input type="checkbox" id="selectAllPageReimp" title="Sélectionner tous les fichiers de la page" />
+          </th>
+        </tr>
+      </thead>
+      <tbody id="tb-reimp"></tbody>
+    </table>
+  </div>
+
+  <div class="toolbar center">
+    <div class="pagination" id="pag-reimp"></div>
+  </div>
+</div>
+
+
+<!-- SUIVI (inchangé) -->
+<div class="panel section" id="sec-suivi">
+  <div class="head">Suivi — tous documents</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th><th class="w-nom">Nom</th><th>Type</th><th class="w-small">Dpt</th><th class="w-small">SPR</th>
+          <th class="w-small">COM</th><th class="w-small">LVO</th><th class="w-small">BUR</th><th class="w-small">RUN</th>
+          <th class="w-small">Pages</th><th class="w-kb">Taille (Ko)</th><th class="w-size">Impr./Tot</th><th>Statut</th><th>Imprimante</th>
+        </tr>
+      </thead>
+      <tbody id="tb-suivi"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ADMIN (inchangé) -->
+<div class="panel section" id="sec-admin">
+  <div class="head">Administration</div>
+  <div style="padding:16px; display:flex; gap:12px; align-items:end; flex-wrap:wrap;">
+    <div><label>Utilisateur</label><br/><input id="admUser" placeholder="username"></div>
+    <div><label>Nouveau mot de passe</label><br/><input id="admPass" type="password" placeholder="********"></div>
+    <button class="btn primary" id="admReset">Réinitialiser MDP</button>
+  </div>
+
+  <div style="padding:16px;">
+    <h3>Imprimantes (HotFolders)</h3>
+    <div style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+      <div><label>Nom</label><br/><input id="hfName"></div>
+      <div><label>Chemin</label><br/><input id="hfPath" style="width:420px"></div>
+      <button class="btn" id="hfAdd">Ajouter</button>
+    </div>
+    <ul id="hfList"></ul>
+  </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>

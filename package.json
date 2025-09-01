@@ -1,0 +1,27 @@
+{
+  "name": "yesdocu",
+  "version": "2.1.0",
+  "private": true,
+  "description": "YesDocu - Fiery workflow (Impressions, Réimpressions, Suivi, Administration)",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node src/index.js",
+    "users:list": "node tools/list-users.js",
+    "users:reset:admin": "node tools/reset-user.js admin admin"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.6.0",
+    "cookie-parser": "^1.4.7",
+    "express": "^4.19.2",
+    "express-session": "^1.17.3",
+    "pdf-lib": "^1.17.1",
+    "pdf-parse": "^1.1.1",
+    "sqlite3": "^5.1.7"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "author": "",
+  "license": "UNLICENSED"
+}

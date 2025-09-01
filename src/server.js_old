@@ -1,0 +1,252 @@
+// YesDocu 2.1.0 — server.js (2025-08-30)
+// Sert le front, Auth, Hotfolders, Impressions/Réimpressions/Suivi, Vue PDF, Soumission JDF, Scanner.
+
+const express = require('express');
+const session = require('express-session');
+const path = require('path');
+const fs = require('fs');
+const fsp = fs.promises;
+const Database = require('better-sqlite3');
+
+const { PATHS, PORT, APP_VERSION, WEB_VERSION, SCAN_INTERVAL_MS } = require('./config');
+
+// Logs de démarrage
+console.log('[YesDocu] APP_VERSION:', APP_VERSION);
+console.log('[YesDocu] WEB_VERSION:', WEB_VERSION);
+console.log('[YesDocu] DB:', PATHS.DB);
+console.log('[YesDocu] PUBLIC:', PATHS.PUBLIC);
+
+const db = new Database(PATHS.DB);
+db.pragma('journal_mode = WAL');
+
+// Services
+const docsService = require('./services/documents'); // upsert/list/updateStatus/...
+
+// FS helpers
+async function ensureDir(p) { await fsp.mkdir(p, { recursive: true }); }
+async function safeMove(src, dst) {
+  await ensureDir(path.dirname(dst));
+  try { await fsp.rename(src, dst); }
+  catch (e) {
+    if (e.code === 'EXDEV' || e.code === 'EPERM') { await fsp.copyFile(src, dst); await fsp.unlink(src); }
+    else throw e;
+  }
+}
+function fileExists(p) { return fs.existsSync(p); }
+
+// App
+const app = express();
+app.use(express.json({ limit: '5mb' }));
+app.use(session({
+  secret: 'yesdocu-dev-secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { maxAge: 12*60*60*1000 }
+}));
+
+// Static
+app.use(express.static(PATHS.PUBLIC));
+
+// Middlewares rôles
+function requireLogin(req, res, next) {
+  if (!req.session.user) return res.status(401).json({ message: 'Non authentifié' });
+  next();
+}
+function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!req.session.user) return res.status(401).json({ message: 'Non authentifié' });
+    const ok = roles.includes(req.session.user.role);
+    if (!ok) return res.status(403).json({ message: 'Accès refusé' });
+    next();
+  };
+}
+
+// DB helpers (users/hotfolders)
+function getUserByUsername(username) {
+  return db.prepare(`SELECT * FROM users WHERE username=?`).get(username);
+}
+function listHotfolders() {
+  return db.prepare(`SELECT id,name,path,created_at,updated_at FROM hotfolders ORDER BY name`).all();
+}
+function addHotfolder(name, p) {
+  return db.prepare(`
+    INSERT INTO hotfolders (name, path, created_at, updated_at)
+    VALUES (?, ?, datetime('now'), datetime('now'))
+    ON CONFLICT(name) DO UPDATE SET path=excluded.path, updated_at=datetime('now')
+  `).run(name, p);
+}
+function deleteHotfolder(name) {
+  return db.prepare(`DELETE FROM hotfolders WHERE name=?`).run(name);
+}
+function getHotfolderByName(name) {
+  return db.prepare(`SELECT * FROM hotfolders WHERE name=?`).get(name);
+}
+
+// AUTH
+app.get('/auth/me', (req, res) => {
+  res.json({ user: req.session.user || null, versions: { app: APP_VERSION, web: WEB_VERSION } });
+});
+app.post('/auth/login', (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ message: 'username/password requis' });
+  const u = getUserByUsername(username);
+  if (!u || (u.password || '') !== password) return res.status(401).json({ message: 'Login invalide' });
+  req.session.user = { id: u.id, username: u.username, role: u.role };
+  res.json({ ok: true, user: req.session.user });
+});
+app.post('/auth/logout', (req, res) => { req.session.destroy(() => res.json({ ok: true })); });
+
+// Admin: reset password
+app.post('/admin/reset-password', requireRole('admin'), (req, res) => {
+  const { username, newPassword } = req.body || {};
+  if (!username || !newPassword) return res.status(400).json({ message: 'username/newPassword requis' });
+  const r = db.prepare(`UPDATE users SET password=?, updated_at=datetime('now') WHERE username=?`).run(newPassword, username);
+  if (r.changes === 0) return res.status(404).json({ message: 'Utilisateur introuvable' });
+  res.json({ ok: true });
+});
+
+// Hotfolders
+app.get('/hotfolders', requireLogin, (req, res) => res.json(listHotfolders()));
+app.post('/admin/hotfolders', requireRole('admin'), (req, res) => {
+  const { name, path: p } = req.body || {};
+  if (!name || !p) return res.status(400).json({ message: 'name/path requis' });
+  try { addHotfolder(name, p); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ message: e.message }); }
+});
+app.delete('/admin/hotfolders/:name', requireRole('admin'), (req, res) => {
+  const r = deleteHotfolder(req.params.name);
+  res.json({ ok: true, deleted: r.changes });
+});
+
+// Impressions / Réimpressions / Suivi
+app.get('/impressions', requireRole('operateur','responsable','admin'), (req, res) => res.json(docsService.listImpressions()));
+app.get('/reimpressions', requireRole('responsable','admin'), (req, res) => res.json(docsService.listReimpressions()));
+app.get('/suivi', requireRole('operateur','superviseur','responsable','admin'), (req, res) => res.json(docsService.listSuivi()));
+
+// Génération JDF minimal
+function buildJDF(name) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<JDF Type="Combined" Version="1.3" ID="YesDocu-${Date.now()}" JobPartID="${name}" Status="Waiting">
+  <AuditPool><Created TimeStamp="${new Date().toISOString()}" AgentName="YesDocu"/></AuditPool>
+  <ResourcePool>
+    <RunList Class="Parameter" ID="RunList_1">
+      <RunList LinkUsage="Input" FileSpecURL="${name}"/>
+    </RunList>
+  </ResourcePool>
+  <ResourceLinkPool><RunListLink rRef="RunList_1" Usage="Input"/></ResourceLinkPool>
+  <NodeInfo Class="Parameter" ID="NodeInfo_1"/>
+</JDF>`;
+}
+
+// Soumettre impressions (lot et par ligne)
+app.post('/process/impressions', requireRole('operateur','responsable','admin'), async (req, res) => {
+  try {
+    const { jobs, defaultHotfolder } = req.body || {};
+    if (!Array.isArray(jobs) || jobs.length===0) return res.status(400).json({ message: 'jobs[] requis' });
+    if (!defaultHotfolder) return res.status(400).json({ message: 'Imprimante (lot) requise' });
+
+    const allHF = listHotfolders();
+    const hfMap = new Map(allHF.map(h => [h.name, h.path]));
+    const hfPath = hfMap.get(defaultHotfolder);
+    if (!hfPath) throw new Error('Imprimante inconnue');
+
+    let processed = 0;
+    for (const j of jobs) {
+      const name = j.name;
+      const srcPdf = path.join(PATHS.INPROGRESS, name);
+      if (!fileExists(srcPdf)) throw new Error(`Fichier introuvable: ${name}`);
+
+      const jdfName = name.replace(/\.pdf$/i, '.jdf');
+      const tmpJdf = path.join(PATHS.INPROGRESS, jdfName);
+      await fsp.writeFile(tmpJdf, buildJDF(name), 'utf8');
+
+      await safeMove(srcPdf, path.join(hfPath, name));
+      await safeMove(tmpJdf, path.join(hfPath, jdfName));
+
+      docsService.updateStatus(name, 'en_cours', defaultHotfolder);
+      processed++;
+    }
+    res.json({ ok: true, processed });
+  } catch (e) {
+    console.error('process/impressions error:', e);
+    res.status(500).json({ message: String(e.message || e) });
+  }
+});
+
+// Soumettre réimpressions
+app.post('/process/reimpressions', requireRole('responsable','admin'), async (req, res) => {
+  try {
+    const { jobs, defaultHotfolder } = req.body || {};
+    if (!Array.isArray(jobs) || jobs.length===0) return res.status(400).json({ message: 'jobs[] requis' });
+    if (!defaultHotfolder) return res.status(400).json({ message: 'Imprimante (lot) requise' });
+
+    const allHF = listHotfolders();
+    const hfMap = new Map(allHF.map(h => [h.name, h.path]));
+    const hfPath = hfMap.get(defaultHotfolder);
+    if (!hfPath) throw new Error('Imprimante inconnue');
+
+    let processed = 0;
+    for (const j of jobs) {
+      const name = j.name;
+      const srcPdf = path.join(PATHS.INPROGRESS, name);
+      if (!fileExists(srcPdf)) throw new Error(`Fichier introuvable: ${name}`);
+
+      const jdfName = name.replace(/\.pdf$/i, '.jdf');
+      const tmpJdf = path.join(PATHS.INPROGRESS, jdfName);
+      await fsp.writeFile(tmpJdf, buildJDF(name), 'utf8');
+
+      await safeMove(srcPdf, path.join(hfPath, name));
+      await safeMove(tmpJdf, path.join(hfPath, jdfName));
+
+      docsService.incrementReprint(name, defaultHotfolder);
+      processed++;
+    }
+    res.json({ ok: true, processed });
+  } catch (e) {
+    console.error('process/reimpressions error:', e);
+    res.status(500).json({ message: String(e.message || e) });
+  }
+});
+
+// Vue PDF depuis InProgress
+app.get('/file/:name', requireLogin, (req, res) => {
+  const name = req.params.name || '';
+  if (!/\.pdf$/i.test(name)) return res.status(400).send('Nom invalide');
+  const safe = path.basename(name);
+  const abs = path.join(PATHS.INPROGRESS, safe);
+  if (!fs.existsSync(abs)) return res.status(404).send('Fichier introuvable');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${safe}"`);
+  res.sendFile(abs);
+});
+
+// Route / et fallback (après API)
+app.get('/', (req, res) => res.sendFile(path.join(PATHS.PUBLIC, 'index.html')));
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/auth') || req.path.startsWith('/process') ||
+      req.path.startsWith('/hotfolders') || req.path.startsWith('/impressions') ||
+      req.path.startsWith('/reimpressions') || req.path.startsWith('/suivi') ||
+      req.path.startsWith('/file/')) {
+    return next();
+  }
+  res.sendFile(path.join(PATHS.PUBLIC, 'index.html'));
+});
+
+// Scanner
+try {
+  const { startScanner } = require('./jobs/scanner');
+  startScanner();
+  console.log(`[YesDocu] Scanner démarré (interval=${SCAN_INTERVAL_MS}ms)`);
+} catch (e) {
+  console.warn('[YesDocu] Scanner non démarré:', e.message);
+}
+
+// Dossiers DATA
+(async () => {
+  for (const d of [PATHS.DATA, PATHS.INPRINT, PATHS.INREPRINT, PATHS.INPROGRESS, PATHS.REJETS]) {
+    try { await ensureDir(d); } catch {}
+  }
+})();
+
+// Start
+app.listen(PORT, () => console.log(`YesDocu en ligne: http://localhost:${PORT}`));
